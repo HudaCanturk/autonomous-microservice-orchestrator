@@ -1,0 +1,100 @@
+{
+  "id": "LatencyUyariWebhookWorkflow",
+  "name": "Servis C Gecikme (Webhook -> Gemini -> Telegram -> Recovery)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "latency-uyari",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-latency-uyari-1",
+      "name": "Gecikme Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=GECİKME (LATENCY) OLAYI\nServis: {{ $json.body.servis }}\nOlay: {{ $json.body.event }}\nGecikme: {{ $json.body.gecikme_ms }} ms\nDetay: {{ $json.body.detay }}\n\nBu gecikme olayını analiz et ve Türkçe kısa bir Telegram bildirimi üret.",
+        "options": {
+          "systemMessage": "Sen bir DevOps gecikme (latency) izleme uzmanısın. Servis C'nin yanıt süresiyle ilgili bir olay alırsın.\n\n- event=uyari ise: gecikmenin uyarı eşiğine (300 ms) ulaştığını bildir. Servis hâlâ ayakta ama yavaşlıyor. Henüz otomatik restart YAPILMADI — sadece izleme/uyarı.\n- event=aksiyon ise: gecikmenin kritik eşiğe (600 ms) ulaştığını bildir. Otonom servis yeniden başlatma BAŞLATILDI.\n\nZORUNLU FORMAT:\n⏱ GECİKME OLAYI (Gemini)\n📌 Servis: <servis adı>\n📊 Gecikme: <ms> ms\n<event=uyari ise '⚠️ Durum: GECİKME UYARISI' , event=aksiyon ise '🚨 Durum: GECİKME KRİTİK — MÜDAHALE'>\n🔍 Analiz: <bir cümle>\n⚙️ Aksiyon: <event=uyari ise 'Henüz müdahale yok, izleniyor', aksiyon ise 'Servis otomatik yeniden başlatılıyor'>\n\nSadece raporu döndür."
+        }
+      },
+      "id": "agent-latency-uyari-1",
+      "name": "Gecikme Analizi (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "maxOutputTokens": 1024,
+          "temperature": 0.2
+        }
+      },
+      "id": "gemini-latency-uyari-1",
+      "name": "Gemini 2.5 Flash",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [440, 480],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "BAcNUipRMfkaFtgV",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.output }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-latency-uyari-1",
+      "name": "Telegram Gecikme",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [700, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "FjNGOZjUqJf9d1Vu",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sadece 'aksiyon' olayinda kurtarma: Servis C'yi yeniden baslat (gecikme sifirlanir)\nconst event = $('Gecikme Webhook').first().json.body.event || '';\nif (event === 'aksiyon') {\n  const { execSync } = require('child_process');\n  try { execSync('docker restart tasarim_proje-servis_c-1', { timeout: 30000 }); } catch (e) {}\n}\nreturn $input.all();"
+      },
+      "id": "recovery-latency-uyari-1",
+      "name": "Recovery (Servis C Restart)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Gecikme Webhook": {
+      "main": [[{ "node": "Gecikme Analizi (Gemini)", "type": "main", "index": 0 }]]
+    },
+    "Gemini 2.5 Flash": {
+      "ai_languageModel": [[{ "node": "Gecikme Analizi (Gemini)", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Gecikme Analizi (Gemini)": {
+      "main": [[{ "node": "Telegram Gecikme", "type": "main", "index": 0 }]]
+    },
+    "Telegram Gecikme": {
+      "main": [[{ "node": "Recovery (Servis C Restart)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

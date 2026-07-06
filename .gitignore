@@ -1,0 +1,37 @@
+# ---- Secrets / runtime data (NEVER commit) ----
+n8n_data/
+yedek_n8n_*/
+.env
+*.env
+GEMINI_GCP_BAGLANTI.md
+
+# n8n exports that may contain real credentials/tokens
+all_workflows.json
+deneme1_export.json
+otonom_export.json
+otonom_fix.json
+otonom_latest.json
+otonom_verify.json
+otonom_verify2.json
+
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- Backups / scratch ----
+app.py.bozuk_yedek
+*.bozuk_yedek
+*.bak
+notlar.txt
+
+# ---- Report fragments (LaTeX) ----
+*.tex
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

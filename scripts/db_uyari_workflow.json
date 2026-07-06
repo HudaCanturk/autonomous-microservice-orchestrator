@@ -1,0 +1,110 @@
+{
+  "id": "DbUyariWebhookWorkflow",
+  "name": "Servis A DB Uyari (Webhook -> Gemini -> Telegram)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "db-uyari",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-db-uyari-1",
+      "name": "DB Uyari Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "b7c1e2a4-9d3f-4a1b-8c2e-1f0a5d6e7b90"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=VERİTABANI OLAYI ANALİZİ\nServis: {{ $json.body.servis }}\nHam olay mesajı:\n{{ $json.body.mesaj }}\n\nBu PostgreSQL veritabanı olayını analiz et ve Türkçe kısa bir Telegram olay raporu üret.",
+        "options": {
+          "systemMessage": "Sen bir DevOps veritabanı olay analiz uzmanısın. Sana Servis A'nın PostgreSQL veritabanından gelen bir olay (eşik uyarısı veya retention/kapasite aşımı) verilir. Olayı analiz et ve Türkçe, kısa, net bir Telegram bildirimi üret.\n\nZORUNLU FORMAT:\n🤖 DB OLAY ANALİZİ (Gemini)\n📌 Servis: <servis adı>\n🔍 Durum: <olayın bir cümlelik özeti>\n📊 Değerlendirme: <önem derecesi ve nedeni>\n💡 Öneri: <kısa, uygulanabilir öneri>\n\nSadece raporu döndür, başka açıklama ekleme."
+        }
+      },
+      "id": "agent-db-uyari-1",
+      "name": "DB Olay Analizi (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "maxOutputTokens": 1024,
+          "temperature": 0.2
+        }
+      },
+      "id": "gemini-db-uyari-1",
+      "name": "Gemini 2.5 Flash",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [480, 480],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "BAcNUipRMfkaFtgV",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.output }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-db-uyari-1",
+      "name": "Telegram DB Uyari",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [760, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "FjNGOZjUqJf9d1Vu",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "DB Uyari Webhook": {
+      "main": [
+        [
+          {
+            "node": "DB Olay Analizi (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 2.5 Flash": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "DB Olay Analizi (Gemini)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Olay Analizi (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Telegram DB Uyari",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

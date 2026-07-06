@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'mikroservisler'
+    static_configs:
+      - targets: ['servis_a:5000', 'servis_b:5000', 'servis_c:5000']

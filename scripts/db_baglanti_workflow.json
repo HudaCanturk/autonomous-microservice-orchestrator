@@ -1,0 +1,99 @@
+{
+  "id": "DbBaglantiWebhookWorkflow",
+  "name": "Servis A DB Baglanti (Webhook -> Gemini -> Telegram -> Recovery)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "db-baglanti",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-db-baglanti-1",
+      "name": "DB Baglanti Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "c8d2f3b5-1e4a-4c2b-9d3f-2a1b6c7d8e90"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=VERİTABANI BAĞLANTI OLAYI\nServis: {{ $json.body.servis }}\nOlay: {{ $json.body.event }}\nDetay: {{ $json.body.detay }}\n\nBu PostgreSQL bağlantı olayını analiz et ve Türkçe kısa bir Telegram bildirimi üret.",
+        "options": {
+          "systemMessage": "Sen bir DevOps veritabanı bağlantı izleme uzmanısın. Servis A'nın PostgreSQL bağlantısıyla ilgili bir olay alırsın. Olay 'koptu' veya 'baglandi' olabilir.\n\n- event=koptu ise: bağlantının koptuğunu, otomatik kurtarma (recovery) sürecinin başlatıldığını bildir.\n- event=baglandi ise: bağlantının yeniden başarıyla kurulduğunu, sistemin normale döndüğünü bildir.\n\nZORUNLU FORMAT:\n🔌 DB BAĞLANTI OLAYI (Gemini)\n📌 Servis: <servis adı>\n<event=koptu ise '🔴 Durum: Bağlantı KOPTU' , event=baglandi ise '🟢 Durum: Bağlantı KURULDU'>\n🔍 Analiz: <olayın bir cümlelik değerlendirmesi>\n⚙️ Aksiyon: <event=koptu ise 'Otomatik yeniden bağlanma başlatıldı', baglandi ise 'Sistem normale döndü'>\n\nSadece raporu döndür, başka açıklama ekleme."
+        }
+      },
+      "id": "agent-db-baglanti-1",
+      "name": "Baglanti Analizi (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "maxOutputTokens": 1024,
+          "temperature": 0.2
+        }
+      },
+      "id": "gemini-db-baglanti-1",
+      "name": "Gemini 2.5 Flash",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [440, 480],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "BAcNUipRMfkaFtgV",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.output }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-db-baglanti-1",
+      "name": "Telegram Baglanti",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [700, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "FjNGOZjUqJf9d1Vu",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sadece 'koptu' olayinda kurtarma (recovery) calistir:\n// 1) Postgres konteyneri durmussa baslat  2) Servis A uygulama blogunu temizle\nconst event = $('DB Baglanti Webhook').first().json.body.event || '';\nif (event === 'koptu') {\n  const { execSync } = require('child_process');\n  try { execSync('docker start tasarim_proje-postgres-1', { timeout: 15000 }); } catch (e) {}\n  try { execSync('wget -qO- --timeout=5 http://servis_a:5000/db/reconnect', { timeout: 8000 }); } catch (e) {}\n}\nreturn $input.all();"
+      },
+      "id": "recovery-db-baglanti-1",
+      "name": "Recovery (Yeniden Bagla)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "DB Baglanti Webhook": {
+      "main": [[{ "node": "Baglanti Analizi (Gemini)", "type": "main", "index": 0 }]]
+    },
+    "Gemini 2.5 Flash": {
+      "ai_languageModel": [[{ "node": "Baglanti Analizi (Gemini)", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Baglanti Analizi (Gemini)": {
+      "main": [[{ "node": "Telegram Baglanti", "type": "main", "index": 0 }]]
+    },
+    "Telegram Baglanti": {
+      "main": [[{ "node": "Recovery (Yeniden Bagla)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

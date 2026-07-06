@@ -1,0 +1,579 @@
+[
+  {
+    "id": "OtomonMikroservisOrkestratoru",
+    "name": "Otonom Mikroservis Orkestratörü",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "* * * * *"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -700,
+          0
+        ],
+        "id": "a1b2c3d4-0001-0001-0001-000000000001",
+        "name": "Schedule Trigger"
+      },
+      {
+        "parameters": {
+          "url": "http://prometheus:9090/api/v1/query",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "query",
+                "value": "{__name__=~\"process_resident_memory_bytes|up\",job=\"mikroservisler\"}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -480,
+          0
+        ],
+        "id": "a1b2c3d4-0002-0002-0002-000000000002",
+        "name": "Prometheus Metrikleri Çek"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prometheus'tan gelen toplu veri paketini servis bazında ayrıştır\nconst results = $input.first().json.data.result;\nconst services = {};\n\nfor (const r of results) {\n  const metricName = r.metric.__name__;\n  const instance = r.metric.instance;\n  const servisAdi = instance.split(':')[0];\n\n  if (!services[servisAdi]) {\n    services[servisAdi] = { servis: servisAdi, instance };\n  }\n\n  if (metricName === 'process_resident_memory_bytes') {\n    const bytes = parseFloat(r.value[1]);\n    services[servisAdi].ram_bytes = bytes;\n    services[servisAdi].ram_mb = parseFloat((bytes / 1048576).toFixed(2));\n  } else if (metricName === 'up') {\n    services[servisAdi].up = r.value[1] === '0' ? 0 : 1;\n  }\n}\n\nconst beklenenServisler = ['servis_a', 'servis_b', 'servis_c'];\nfor (const s of beklenenServisler) {\n  if (!services[s]) services[s] = { servis: s, instance: s + ':5000', ram_mb: 0, ram_bytes: 0, up: 0 };\n  if (services[s].up === undefined) services[s].up = 1;\n  if (services[s].ram_mb === undefined) services[s].ram_mb = 0;\n}\n\n// Predictive maintenance: RAM 150MB ustu ise risk olarak isaretle.\nconst izlenecekServisler = Object.values(services)\n  .filter((s) => s.ram_mb > 150 || s.up === 0)\n  .map((s) => ({\n    ...s,\n    predictive_risk: s.up === 0 ? 'CRITICAL' : (s.ram_mb > 200 ? 'HIGH' : 'EARLY_WARNING')\n  }));\n\n// Risk yoksa sonraki nodelara item gitmesin.\nreturn [{ json: { servisler: izlenecekServisler } }];\n"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -240,
+          0
+        ],
+        "id": "a1b2c3d4-0003-0003-0003-000000000003",
+        "name": "Metrikleri Ayrıştır"
+      },
+      {
+        "parameters": {
+          "fieldToSplitOut": "servisler",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitOut",
+        "typeVersion": 1,
+        "position": [
+          0,
+          0
+        ],
+        "id": "a1b2c3d4-0004-0004-0004-000000000004",
+        "name": "Split Out"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Ağ metrik adından Docker konteyner adını dinamik olarak türet\n// Raporda belirtilen: JavaScript'in split() ve replace() fonksiyonlarıyla\n// ağ verileri Docker'ın anlayabileceği konteyner isimlerine dönüştürülür\n\nconst instance = $json.instance || ($json.servis + ':5000');\n\n// 'servis_a:5000' → 'servis_a' (split ile port kısmını ayır)\nconst servisAdi = instance.split(':')[0];\n\n// 'servis_a' → 'tasarim_proje-servis_a-1' (Docker compose naming convention)\n// Olası tire/boşluk hatalarını önlemek için replace ile normalize et\nconst containerName = 'tasarim_proje-' + servisAdi.replace(/ /g, '_') + '-1';\n\nreturn [{\n  json: {\n    ...$json,\n    containerName\n  }\n}];\n"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          240,
+          0
+        ],
+        "id": "a1b2c3d4-0005-0005-0005-000000000005",
+        "name": "Konteyner Adı Türet"
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "=OTONOM MÜDAHALE GÖREVİ\nServis: {{ $json.servis }}\nKonteyner: {{ $json.containerName }}\nRAM: {{ $json.ram_mb }} MB\nDurum: {{ $json.up === 0 ? 'DOWN' : 'RUNNING' }}\nRisk: {{ $json.predictive_risk }}\n\nMetrikleri analiz et, gerekirse log oku, karar ver ve araçları çalıştır.",
+          "options": {
+            "systemMessage": "Sen tam otonom DevOps süper ajanısın. Verilen metrikleri analiz et, gerekirse get_logs ile log oku, KARAR VER ve uygun aracı ÇALIŞTIR.\n\nKullanabileceğin araçlar:\n- get_logs: Docker loglarını oku (parametre: konteyner adı, örn tasarim_proje-servis_a-1)\n- restart_service: Konteyneri yeniden başlat (parametre: konteyner adı)\n- cache_evict_servis_b: Servis B Redis önbelleğini temizle (parametre yok, boş string gönder)\n- check_rabbitmq_queue: Servis C kuyruk derinliğini oku (parametre yok)\n- ban_gateway_ip: Şüpheli dış IP'yi nginx gateway'de banla (parametre: IP adresi, örn 203.0.113.5)\n\nKarar rehberi (sen nihai kararı verirsin):\n- up=0 veya RAM çok yüksek: önce log oku, sonra restart_service\n- servis_b + yüksek RAM: cache_evict_servis_b dene, yetmezse restart_service\n- servis_c + kuyruk dolu: check_rabbitmq_queue, gerekirse restart_service veya worker uyarısı yaz\n- Açık saldırı/DDoS şüphesi: ban_gateway_ip (sadece net şüpheli dış IP için)\n\nRapor formatı (Türkçe, kısa):\n🔍 Kök Neden: ...\n⚙️ Yapılan Aksiyonlar: (hangi araçlar çalıştı)\n✅ Sonuç: ...\n\nGerçek sorun yoksa ve araç çalıştırmadıysan çıktının sonuna SISTEM-OK ekle.\nSorun varsa mutlaka en az bir araç çalıştır veya neden çalıştıramadığını yaz."
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "continueOnFail": true,
+        "position": [
+          480,
+          0
+        ],
+        "id": "a1b2c3d4-0006-0006-0006-000000000006",
+        "name": "Bağışıklık Ajanı (Gemini)"
+      },
+      {
+        "parameters": {
+          "jsCode": "const servis = String($json.servis || 'bilinmeyen');\nconst servisLabel = servis.replace(/_/g, ' ').toUpperCase();\nconst ram = Number($json.ram_mb || 0);\nconst up = Number($json.up ?? 1);\nconst risk = String($json.predictive_risk || '');\nconst aiOutput = ($json.output || '').toString().trim();\n\nconst hasAction = /restart|ban|evict|banland|yeniden|temizlendi|mudahale|uygulandi|calistirildi/i.test(aiOutput);\nconst isOk = aiOutput.includes('SISTEM-OK') && !hasAction;\n\nif (isOk) {\n  return [{ json: { ...$json, output: 'SISTEM-OK' } }];\n}\n\nconst msg = '🤖 OTONOM MÜDAHALE (Gemini)\\n'\n  + '📌 Servis: ' + servisLabel + '\\n'\n  + '📊 RAM: ' + ram.toFixed(2) + ' MB | up=' + up + ' | Risk: ' + risk + '\\n\\n'\n  + aiOutput;\n\nreturn [{ json: { ...$json, output: msg } }];"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          720,
+          0
+        ],
+        "id": "a1b2c3d4-0017-0017-0017-000000000017",
+        "name": "Otonom Rapor Oluştur"
+      },
+      {
+        "parameters": {
+          "modelName": "models/gemini-2.5-flash",
+          "options": {
+            "temperature": 0.2,
+            "maxOutputTokens": 1024
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+        "typeVersion": 1,
+        "position": [
+          480,
+          240
+        ],
+        "id": "a1b2c3d4-0007-0007-0007-000000000007",
+        "name": "Gemini 2.5 Flash",
+        "credentials": {
+          "googlePalmApi": {
+            "id": "BAcNUipRMfkaFtgV",
+            "name": "Google Gemini(PaLM) Api account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "name": "get_logs",
+          "description": "Docker konteynerinin son log kayıtlarını getirir. Adli analiz (forensic analysis) için kullan. Parametre olarak konteyner adını gönder (örn: tasarim_proje-servis_a-1).",
+          "language": "javaScript",
+          "jsCode": "const execSync = require('child_process').execSync;\nconst containerName = (query || '').trim();\ntry {\n  const logs = execSync(`/usr/bin/docker logs --tail 80 ${containerName} 2>&1`, { timeout: 15000 }).toString();\n  return logs || '(Log bos)';\n} catch (e) {\n  return 'Log alinamadi: ' + e.message.slice(0, 150);\n}"
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolCode",
+        "typeVersion": 1.3,
+        "position": [
+          240,
+          240
+        ],
+        "id": "a1b2c3d4-0008-0008-0008-000000000008",
+        "name": "get_logs Aracı"
+      },
+      {
+        "parameters": {
+          "name": "restart_service",
+          "description": "Docker konteynerini yeniden başlatır (self-healing). Terminal seviyesinde docker restart komutu tetikler. Parametre olarak konteyner adını gönder (örn: tasarim_proje-servis_a-1).",
+          "language": "javaScript",
+          "jsCode": "const execSync = require('child_process').execSync;\nconst containerName = (query || '').trim();\ntry {\n  execSync(`/usr/bin/docker restart ${containerName} 2>&1`, { timeout: 45000 });\n  const durum = execSync(`/usr/bin/docker inspect --format '{{.State.Status}}' ${containerName} 2>&1`, { timeout: 10000 }).toString().trim();\n  return `${containerName} yeniden baslatildi | Durum: ${durum}`;\n} catch (e) {\n  return 'Restart basarisiz: ' + e.message.slice(0, 150);\n}"
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolCode",
+        "typeVersion": 1.3,
+        "position": [
+          720,
+          240
+        ],
+        "id": "a1b2c3d4-0009-0009-0009-000000000009",
+        "name": "restart_service Aracı"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "filter-cond-001",
+                "leftValue": "={{ $json.output }}",
+                "rightValue": "SISTEM-OK",
+                "operator": {
+                  "type": "string",
+                  "operation": "notContains"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.3,
+        "position": [
+          720,
+          0
+        ],
+        "id": "a1b2c3d4-0010-0010-0010-000000000010",
+        "name": "SISTEM-OK Filtresi"
+      },
+      {
+        "parameters": {
+          "chatId": "YOUR_TELEGRAM_CHAT_ID",
+          "text": "={{ $json.output }}",
+          "additionalFields": {}
+        },
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          960,
+          0
+        ],
+        "id": "a1b2c3d4-0011-0011-0011-000000000011",
+        "name": "Telegram Bildirimi",
+        "webhookId": "9d5c4d4e-d430-4ad6-a550-b6d6b25a8483",
+        "credentials": {
+          "telegramApi": {
+            "id": "FjNGOZjUqJf9d1Vu",
+            "name": "Telegram account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "content": "📡 **Prometheus API**\nMikroservislerin `up` ve `process_resident_memory_bytes` metriklerini ham veri olarak çeker.\n\nScrape interval: 5 saniye",
+          "height": 110,
+          "width": 210,
+          "color": "#97026F"
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -510,
+          -150
+        ],
+        "id": "a1b2c3d4-0012-0012-0012-000000000012",
+        "name": "Not: Prometheus"
+      },
+      {
+        "parameters": {
+          "content": "🔀 **Split Out Düğümü**\nPrometheus'tan gelen toplu veri paketini servis bazında parçalar. Her servis ayrı bir item olarak döngüsel işleme girer.",
+          "height": 110,
+          "width": 210,
+          "color": "#0262FF"
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          -30,
+          -150
+        ],
+        "id": "a1b2c3d4-0013-0013-0013-000000000013",
+        "name": "Not: Split Out"
+      },
+      {
+        "parameters": {
+          "content": "🧠 **Otonom Süper Ajan (Gemini)**\nKarar + restart + cache + kuyruk + IP ban araçları.\nSabit kurallar kaldırıldı; aksiyonları Gemini seçer.",
+          "height": 130,
+          "width": 230,
+          "color": "#025E0C"
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          450,
+          -170
+        ],
+        "id": "a1b2c3d4-0014-0014-0014-000000000014",
+        "name": "Not: Super-Agent"
+      },
+      {
+        "parameters": {
+          "content": "🔇 **Gürültü Kontrolü**\nSISTEM-OK çıktısı filtreler. Yalnızca gerçek incident raporları Telegram'a ulaşır.",
+          "height": 90,
+          "width": 190,
+          "color": "#026E09"
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          690,
+          -140
+        ],
+        "id": "a1b2c3d4-0015-0015-0015-000000000015",
+        "name": "Not: Filtre"
+      },
+      {
+        "parameters": {
+          "content": "📱 **Gerçek Zamanlı Bildirim**\nAI tarafından hazırlanan Incident raporunu anlık olarak telefona iletir.",
+          "height": 90,
+          "width": 190,
+          "color": "#5C0505"
+        },
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          930,
+          -140
+        ],
+        "id": "a1b2c3d4-0016-0016-0016-000000000016",
+        "name": "Not: Telegram"
+      },
+      {
+        "parameters": {
+          "name": "cache_evict_servis_b",
+          "description": "Servis B Redis onbellegini temizler. Parametre gerekmez.",
+          "language": "javaScript",
+          "jsCode": "const http = require('http');\nreturn new Promise((resolve) => {\n  const req = http.get('http://servis_b:5000/cache/evict', (res) => {\n    let d = '';\n    res.on('data', (c) => { d += c; });\n    res.on('end', () => resolve('cache_evict_servis_b: ' + (res.statusCode === 200 ? 'basarili' : 'hata ' + res.statusCode) + ' ' + d.slice(0, 120));\n  });\n  req.on('error', (e) => resolve('cache_evict_servis_b hata: ' + e.message));\n  req.setTimeout(8000, () => { req.destroy(); resolve('cache_evict_servis_b: timeout'); });\n});"
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolCode",
+        "typeVersion": 1.3,
+        "position": [
+          360,
+          240
+        ],
+        "id": "a1b2c3d4-0018-0018-0018-000000000018",
+        "name": "cache_evict Aracı"
+      },
+      {
+        "parameters": {
+          "name": "check_rabbitmq_queue",
+          "description": "Servis C RabbitMQ kuyruk istatistiklerini okur.",
+          "language": "javaScript",
+          "jsCode": "const http = require('http');\nreturn new Promise((resolve) => {\n  const req = http.get('http://servis_c:5000/queue/stats', (res) => {\n    let d = '';\n    res.on('data', (c) => { d += c; });\n    res.on('end', () => {\n      try {\n        const p = JSON.parse(d);\n        const q = p.queue || {};\n        resolve('kuyruk: messages=' + (q.messages||0) + ' consumers=' + (q.consumers||0) + ' ready=' + (q.messages_ready||0));\n      } catch (e) { resolve('queue parse hata: ' + d.slice(0, 100)); }\n    });\n  });\n  req.on('error', (e) => resolve('queue hata: ' + e.message));\n  req.setTimeout(8000, () => { req.destroy(); resolve('queue: timeout'); });\n});"
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolCode",
+        "typeVersion": 1.3,
+        "position": [
+          600,
+          240
+        ],
+        "id": "a1b2c3d4-0019-0019-0019-000000000019",
+        "name": "check_queue Aracı"
+      },
+      {
+        "parameters": {
+          "name": "ban_gateway_ip",
+          "description": "Supheli dis IP'yi nginx gateway uzerinde banlar. Parametre: IP (orn 1.2.3.4)",
+          "language": "javaScript",
+          "jsCode": "const execSync = require('child_process').execSync;\nconst ip = (query || '').trim();\nif (!/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(ip)) return 'Gecersiz IP: ' + ip;\nconst gatewayContainer = 'tasarim_proje-servis_d_gateway-1';\nconst banFile = '/etc/nginx/blocked_ips.conf';\nconst now = Date.now();\ntry {\n  const already = execSync(\n    `/usr/bin/docker exec ${gatewayContainer} grep -c 'deny ${ip};' ${banFile} || true`,\n    { timeout: 6000 }\n  ).toString().trim();\n  if (parseInt(already, 10) > 0) return `IP ${ip} zaten banli`;\n  const entry = `deny ${ip}; # banned_at=${now}`;\n  execSync(\n    `/usr/bin/docker exec ${gatewayContainer} sh -c \"echo '${entry}' >> ${banFile}\"`,\n    { timeout: 10000 }\n  );\n  execSync(`/usr/bin/docker exec ${gatewayContainer} nginx -s reload`, { timeout: 10000 });\n  return `IP ${ip} banlandi ve nginx reload edildi`;\n} catch (e) {\n  return 'ban_gateway_ip hata: ' + e.message.slice(0, 150);\n}"
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolCode",
+        "typeVersion": 1.3,
+        "position": [
+          840,
+          240
+        ],
+        "id": "a1b2c3d4-0020-0020-0020-000000000020",
+        "name": "ban_ip Aracı"
+      },
+      {
+        "parameters": {
+          "name": "cache_evict_servis_b",
+          "description": "Servis B Redis onbellegini temizler. Parametre gerekmez.",
+          "language": "javaScript",
+          "jsCode": "const http = require('http');\nreturn new Promise((resolve) => {\n  const req = http.get('http://servis_b:5000/cache/evict', (res) => {\n    let d = '';\n    res.on('data', (c) => { d += c; });\n    res.on('end', () => resolve('cache_evict_servis_b: ' + (res.statusCode === 200 ? 'basarili' : 'hata ' + res.statusCode) + ' ' + d.slice(0, 120));\n  });\n  req.on('error', (e) => resolve('cache_evict_servis_b hata: ' + e.message));\n  req.setTimeout(8000, () => { req.destroy(); resolve('cache_evict_servis_b: timeout'); });\n});"
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolCode",
+        "typeVersion": 1.3,
+        "position": [
+          360,
+          240
+        ],
+        "id": "a1b2c3d4-0018-0018-0018-000000000018",
+        "name": "cache_evict Aracı"
+      },
+      {
+        "parameters": {
+          "name": "check_rabbitmq_queue",
+          "description": "Servis C RabbitMQ kuyruk istatistiklerini okur.",
+          "language": "javaScript",
+          "jsCode": "const http = require('http');\nreturn new Promise((resolve) => {\n  const req = http.get('http://servis_c:5000/queue/stats', (res) => {\n    let d = '';\n    res.on('data', (c) => { d += c; });\n    res.on('end', () => {\n      try {\n        const p = JSON.parse(d);\n        const q = p.queue || {};\n        resolve('kuyruk: messages=' + (q.messages||0) + ' consumers=' + (q.consumers||0) + ' ready=' + (q.messages_ready||0));\n      } catch (e) { resolve('queue parse hata: ' + d.slice(0, 100)); }\n    });\n  });\n  req.on('error', (e) => resolve('queue hata: ' + e.message));\n  req.setTimeout(8000, () => { req.destroy(); resolve('queue: timeout'); });\n});"
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolCode",
+        "typeVersion": 1.3,
+        "position": [
+          600,
+          240
+        ],
+        "id": "a1b2c3d4-0019-0019-0019-000000000019",
+        "name": "check_queue Aracı"
+      },
+      {
+        "parameters": {
+          "name": "ban_gateway_ip",
+          "description": "Supheli dis IP'yi nginx gateway uzerinde banlar. Parametre: IP (orn 1.2.3.4)",
+          "language": "javaScript",
+          "jsCode": "const execSync = require('child_process').execSync;\nconst ip = (query || '').trim();\nif (!/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(ip)) return 'Gecersiz IP: ' + ip;\nconst gatewayContainer = 'tasarim_proje-servis_d_gateway-1';\nconst banFile = '/etc/nginx/blocked_ips.conf';\nconst now = Date.now();\ntry {\n  const already = execSync(\n    `/usr/bin/docker exec ${gatewayContainer} grep -c 'deny ${ip};' ${banFile} || true`,\n    { timeout: 6000 }\n  ).toString().trim();\n  if (parseInt(already, 10) > 0) return `IP ${ip} zaten banli`;\n  const entry = `deny ${ip}; # banned_at=${now}`;\n  execSync(\n    `/usr/bin/docker exec ${gatewayContainer} sh -c \"echo '${entry}' >> ${banFile}\"`,\n    { timeout: 10000 }\n  );\n  execSync(`/usr/bin/docker exec ${gatewayContainer} nginx -s reload`, { timeout: 10000 });\n  return `IP ${ip} banlandi ve nginx reload edildi`;\n} catch (e) {\n  return 'ban_gateway_ip hata: ' + e.message.slice(0, 150);\n}"
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolCode",
+        "typeVersion": 1.3,
+        "position": [
+          840,
+          240
+        ],
+        "id": "a1b2c3d4-0020-0020-0020-000000000020",
+        "name": "ban_ip Aracı"
+      }
+    ],
+    "connections": {
+      "Schedule Trigger": {
+        "main": [
+          [
+            {
+              "node": "Prometheus Metrikleri Çek",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prometheus Metrikleri Çek": {
+        "main": [
+          [
+            {
+              "node": "Metrikleri Ayrıştır",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Metrikleri Ayrıştır": {
+        "main": [
+          [
+            {
+              "node": "Split Out",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split Out": {
+        "main": [
+          [
+            {
+              "node": "Konteyner Adı Türet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Konteyner Adı Türet": {
+        "main": [
+          [
+            {
+              "node": "Bağışıklık Ajanı (Gemini)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Bağışıklık Ajanı (Gemini)": {
+        "main": [
+          [
+            {
+              "node": "Otonom Rapor Oluştur",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "SISTEM-OK Filtresi": {
+        "main": [
+          [
+            {
+              "node": "Telegram Bildirimi",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Gemini 2.5 Flash": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Bağışıklık Ajanı (Gemini)",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_logs Aracı": {
+        "ai_tool": [
+          [
+            {
+              "node": "Bağışıklık Ajanı (Gemini)",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "restart_service Aracı": {
+        "ai_tool": [
+          [
+            {
+              "node": "Bağışıklık Ajanı (Gemini)",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "cache_evict Aracı": {
+        "ai_tool": [
+          [
+            {
+              "node": "Bağışıklık Ajanı (Gemini)",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "check_queue Aracı": {
+        "ai_tool": [
+          [
+            {
+              "node": "Bağışıklık Ajanı (Gemini)",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "ban_ip Aracı": {
+        "ai_tool": [
+          [
+            {
+              "node": "Bağışıklık Ajanı (Gemini)",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Otonom Rapor Oluştur": {
+        "main": [
+          [
+            {
+              "node": "SISTEM-OK Filtresi",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "binaryMode": "separate",
+      "availableInMCP": false,
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "staticData": {
+      "node:Schedule Trigger": {
+        "recurrenceRules": []
+      }
+    },
+    "meta": {
+      "templateCredsSetupCompleted": true
+    },
+    "pinData": {}
+  }
+]

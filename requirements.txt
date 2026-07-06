@@ -1,0 +1,5 @@
+flask
+prometheus-flask-exporter
+redis
+requests
+psycopg2-binary

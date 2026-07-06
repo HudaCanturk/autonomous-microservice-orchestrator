@@ -1,0 +1,99 @@
+{
+  "id": "CacheUyariWebhookWorkflow",
+  "name": "Servis B Cache Uyari (Webhook -> Gemini -> Telegram -> Recovery)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cache-uyari",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-cache-uyari-1",
+      "name": "Cache Uyari Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=ÖNBELLEK (REDIS) OLAYI\nServis: {{ $json.body.servis }}\nOlay: {{ $json.body.event }}\nDetay: {{ $json.body.detay }}\n\nBu Redis önbellek olayını analiz et ve Türkçe kısa bir Telegram bildirimi üret.",
+        "options": {
+          "systemMessage": "Sen bir DevOps önbellek (cache) izleme uzmanısın. Servis B'nin Redis önbelleğiyle ilgili bir olay alırsın. Olay 'sisti' veya 'temizlendi' olabilir.\n\n- event=sisti ise: önbelleğin aşırı şiştiğini, RAM riski oluştuğunu, otomatik temizleme (cache eviction) başlatıldığını bildir.\n- event=temizlendi ise: önbelleğin temizlendiğini, RAM'in normale döndüğünü, servisin hiç kapatılmadan kendini onardığını bildir.\n\nZORUNLU FORMAT:\n⚡ ÖNBELLEK OLAYI (Gemini)\n📌 Servis: <servis adı>\n<event=sisti ise '🔴 Durum: Önbellek ŞİŞTİ' , event=temizlendi ise '🟢 Durum: Önbellek TEMİZLENDİ'>\n🔍 Analiz: <olayın bir cümlelik değerlendirmesi>\n⚙️ Aksiyon: <event=sisti ise 'Otomatik önbellek temizleme başlatıldı', temizlendi ise 'Sistem normale döndü, kesinti yaşanmadı'>\n\nSadece raporu döndür, başka açıklama ekleme."
+        }
+      },
+      "id": "agent-cache-uyari-1",
+      "name": "Onbellek Analizi (Gemini)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "maxOutputTokens": 1024,
+          "temperature": 0.2
+        }
+      },
+      "id": "gemini-cache-uyari-1",
+      "name": "Gemini 2.5 Flash",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [440, 480],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "BAcNUipRMfkaFtgV",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.output }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-cache-uyari-1",
+      "name": "Telegram Cache",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [700, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "FjNGOZjUqJf9d1Vu",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sadece 'sisti' olayinda kurtarma: Servis B onbellegini temizle (cache eviction)\nconst event = $('Cache Uyari Webhook').first().json.body.event || '';\nif (event === 'sisti') {\n  const { execSync } = require('child_process');\n  try { execSync('wget -qO- --timeout=5 http://servis_b:5000/cache/evict', { timeout: 8000 }); } catch (e) {}\n}\nreturn $input.all();"
+      },
+      "id": "recovery-cache-uyari-1",
+      "name": "Recovery (Cache Temizle)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Cache Uyari Webhook": {
+      "main": [[{ "node": "Onbellek Analizi (Gemini)", "type": "main", "index": 0 }]]
+    },
+    "Gemini 2.5 Flash": {
+      "ai_languageModel": [[{ "node": "Onbellek Analizi (Gemini)", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Onbellek Analizi (Gemini)": {
+      "main": [[{ "node": "Telegram Cache", "type": "main", "index": 0 }]]
+    },
+    "Telegram Cache": {
+      "main": [[{ "node": "Recovery (Cache Temizle)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
