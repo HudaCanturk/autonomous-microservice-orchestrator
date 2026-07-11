@@ -406,17 +406,10 @@ python scripts/chaos_test.py
 
 ## Güvenlik Notları
 
-- **Gizli anahtarları asla commit'leme.** API anahtarları ve Telegram token'ları yalnızca n8n credential'larında / git-ignore edilen n8n çalışma zamanı veritabanında yaşar.
 - n8n konteyneri, otonom konteyner kontrolü için Docker soketini bağlar. Demo için bilinçli bir tercihtir; üretimde en-az-yetki prensibiyle kapsamı daraltılmış bir kontrol API'si ile değiştirin.
 - `.gitignore`, çalışma zamanı verisini, sanal ortamları, yedekleri ve kimlik bilgisi içerebilecek export dosyalarını dışlar.
 
-## Gelecek Çalışmalar
 
-- Çoklu-LLM yedekliliği (birincil erişilemezse yedek model)
-- Otonom ölçekleme (yük altında replika artırma)
-- Gelişmiş tahmin (ARIMA / LSTM)
-- Ağ katmanı kaosu (paket kaybı, bölünmeler)
-- Bulut dağıtımı
 
 ---
 
